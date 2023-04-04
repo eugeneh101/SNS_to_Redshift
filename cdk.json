@@ -1,0 +1,20 @@
+{
+  "app": "python3 app.py",
+  "context": {
+    "environment": {
+      "AWS_REGION": "us-east-1",
+      "S3_BUCKET_NAME": "kinesis-firehose-to-redshift-bucket-cdk",
+      "FIREHOSE_IP_ADDRESS": "52.70.63.192/27",
+      "SNS_TOPIC": "SNS_to_Firehose_CDK",
+      "FIREHOSE_NAME": "Firehose_to_Redshift_CDK",
+
+      "REDSHIFT_USER": "admin",
+      "REDSHIFT_PASSWORD": "Password1",
+      "REDSHIFT_DATABASE_NAME": "dev",
+      "REDSHIFT_SCHEMA_NAME_FOR_FIREHOSE": "tx_schema",
+      "REDSHIFT_TABLE_NAME_FOR_FIREHOSE": "tx_table",
+      "REDSHIFT_PORT": 5439
+
+    }
+  }
+}
