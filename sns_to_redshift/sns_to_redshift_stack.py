@@ -151,6 +151,19 @@ class SnsToRedshiftStack(Stack):
         )
 
         # connect the AWS resources
+        self.configure_redshift_for_firehose_lambda.add_environment(
+            key="REDSHIFT_ENDPOINT_ADDRESS",
+            value=self.redshift_cluster.attr_endpoint_address,
+        )
+        self.trigger_configure_redshift_for_firehose_lambda = triggers.Trigger(
+            self,
+            "TriggerConfigureRedshiftForFirehoseLambda",
+            handler=self.configure_redshift_for_firehose_lambda,  # this is underlying Lambda
+            # runs once after Redshift cluster created
+            execute_after=[self.redshift_cluster],
+            # invocation_type=triggers.InvocationType.REQUEST_RESPONSE,
+            # timeout=self.configure_redshift_for_firehose_lambda.timeout,
+        )
         self.firehose_role = iam.Role(
             self,
             "FirehoseRole",
@@ -207,15 +220,15 @@ class SnsToRedshiftStack(Stack):
                 self.redshift_cluster.attr_endpoint_port,
             ),
             copy_command=firehose.CfnDeliveryStream.CopyCommandProperty(
-                data_table_name="{}.{}".format(
+                data_table_name="{}.{}".format(  # needs Redshift info
                     environment["REDSHIFT_SCHEMA_NAME_FOR_FIREHOSE"],
                     environment["REDSHIFT_TABLE_NAME_FOR_FIREHOSE"],
                 ),
                 copy_options="json 'auto ignorecase'",
             ),
-            username=environment["REDSHIFT_USER"],
-            password=environment["REDSHIFT_PASSWORD"],
-            role_arn=self.firehose_role.role_arn,
+            username=environment["REDSHIFT_USER"],  # needs Redshift info
+            password=environment["REDSHIFT_PASSWORD"],  # needs Redshift info
+            role_arn=self.firehose_role.role_arn,  # needs role
             s3_configuration=firehose.CfnDeliveryStream.S3DestinationConfigurationProperty(
                 bucket_arn=self.s3_bucket_for_firehose_to_redshift.bucket_arn,
                 role_arn=self.firehose_role.role_arn,
@@ -260,32 +273,36 @@ class SnsToRedshiftStack(Stack):
             # ),
             ### allow for failed deliveries to save to S3
         )
-
-        self.trigger_configure_redshift_for_firehose_lambda = triggers.Trigger(
+        self.firehose_subscription = sns.Subscription(
             self,
-            "TriggerConfigureRedshiftForFirehoseLambda",
-            handler=self.configure_redshift_for_firehose_lambda,  # this is underlying Lambda
-            # runs once after Redshift cluster created
-            execute_after=[self.redshift_cluster],
-            # invocation_type=triggers.InvocationType.REQUEST_RESPONSE,
-            # timeout=self.configure_redshift_for_firehose_lambda.timeout,
-        )
-        self.configure_redshift_for_firehose_lambda.add_environment(
-            key="REDSHIFT_ENDPOINT_ADDRESS",
-            value=self.redshift_cluster.attr_endpoint_address,
+            "FirehoseSubscription",
+            topic=self.sns_topic,  # needs SNS topic
+            raw_message_delivery=True,
+            endpoint=self.kinesis_firehose.attr_arn,
+            protocol=sns.SubscriptionProtocol.FIREHOSE,
+            subscription_role_arn=self.sns_role_to_put_messages_in_firehose.role_arn,
         )
 
-        ### need to manually connect SNS subscriber to Firehose,
-        ### as it appears CDK does not support this...
 
         # write Cloudformation Outputs
-        self.output_redshift_ref = CfnOutput(
+        self.output_sns_topic_name = CfnOutput(
             self,
-            "S3BucketName",  # Output omits underscores and hyphens
-            value=self.s3_bucket_for_firehose_to_redshift.bucket_name,
+            "SnsTopicName",  # Output omits underscores and hyphens
+            value=self.sns_topic.topic_name,
         )
         self.output_redshift_endpoint_address = CfnOutput(
             self,
             "RedshiftEndpointAddress",  # Output omits underscores and hyphens
             value=self.redshift_cluster.attr_endpoint_address,
         )
+        self.output_firehose_endpoint = CfnOutput(
+            self,
+            "FirehoseEndpoint",  # Output omits underscores and hyphens
+            value=self.kinesis_firehose.attr_arn,
+        )
+        self.output_s3_bucket_name = CfnOutput(
+            self,
+            "S3BucketName",  # Output omits underscores and hyphens
+            value=self.s3_bucket_for_firehose_to_redshift.bucket_name,
+        )
+
