@@ -5,7 +5,7 @@ import string
 
 import boto3
 
-SNS_NUM_MESSAGES_PER_MINUTE = json.loads(os.environ["SNS_NUM_MESSAGES_PER_MINUTE"])
+SNS_NUM_MESSAGES = json.loads(os.environ["SNS_NUM_MESSAGES"])
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 client = boto3.client("sns")
 
@@ -41,7 +41,7 @@ def lambda_handler(event, context) -> None:
             "CHANGE": round((random.random() - 0.5) * 10, 2),
             "PRICE": random.randrange(-100, 100),
         }
-        for _ in range(SNS_NUM_MESSAGES_PER_MINUTE)
+        for _ in range(SNS_NUM_MESSAGES)
     ]
     failed_messages = []
     for mini_batch in [
