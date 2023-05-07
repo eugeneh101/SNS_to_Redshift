@@ -4,15 +4,24 @@
     "environment": {
       "AWS_REGION": "us-east-1",
 
-      "SNS_TOPIC": "sns-to-firehose-cdk",
+      "SNS_TOPIC_NAME": "sns-to-firehose-cdk",
+      "SNS_NUM_MESSAGES_PER_MINUTE": 100,
       "S3_BUCKET_NAME": "sns-to-firehose-bucket-cdk",
+      "DYNAMODB_TABLE_NAME": "current-and-historical-redshift-load-jobs",
+      "DYNAMODB_TTL_IN_DAYS": 7,
+      "TRUNCATE_TABLE": false,
+      "FILE_TYPE": "json",
+      "REDSHIFT_COPY_ADDITIONAL_ARGUMENTS": "'auto ignorecase'",
+      "REDSHIFT_LOAD_EVERY_X_MINUTES": 5,
+      "REDSHIFT_SECRET_NAME": "redshift-login-secret",
 
+      "REDSHIFT_CLUSTER_NAME": "redshift-with-sns-table",
       "REDSHIFT_USER": "admin",
       "REDSHIFT_PASSWORD": "Password1",
       "REDSHIFT_DATABASE_NAME": "dev",
-      "REDSHIFT_SCHEMA_NAME": "tx_schema",
-      "REDSHIFT_TABLE_NAME": "tx_table",
-      "REDSHIFT_PORT": 5439
+      "REDSHIFT_ROLE_NAME": "redshift-role",
+      "REDSHIFT_SCHEMA_NAME": "public",
+      "REDSHIFT_TABLE_NAME": "sns_table"
     }
   }
 }
