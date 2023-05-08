@@ -404,11 +404,16 @@ class UpgradeStack(NestedStack):
             self,
             "move_s3_files_to_processing_folder",
             lambda_function=self.move_s3_files_to_processing_folder_lambda,
-            input_path=sfn.JsonPath.DISCARD,  # maybe figure out what input payload would be
+            payload=sfn.TaskInput.from_object(
+                {
+                    "Execution.$": "$$.Execution.Name"
+                }  # maybe figure out what other input payload would be
+            ),
             payload_response_only=True,
             timeout=self.move_s3_files_to_processing_folder_lambda.timeout,
             retry_on_service_exceptions=False,
         )
+        empty_manifest_file = sfn.Succeed(self, "empty_manifest_file")
         truncate_and_load_redshift_table = sfn_tasks.LambdaInvoke(
             self,
             "truncate_and_load_redshift_table",
@@ -416,8 +421,9 @@ class UpgradeStack(NestedStack):
             integration_pattern=sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
             payload=sfn.TaskInput.from_object(
                 {
-                    "task_token": sfn.JsonPath.task_token,
+                    "redshift_manifest_file_name.$": "$.redshift_manifest_file_name",
                     "s3_prefix_processing.$": "$.s3_prefix_processing",
+                    "task_token": sfn.JsonPath.task_token,
                 }
             ),
             timeout=Duration.minutes(environment["REDSHIFT_LOAD_EVERY_X_MINUTES"]),
@@ -427,7 +433,12 @@ class UpgradeStack(NestedStack):
             self,
             "truncate_and_load_redshift_table_with_task_token",
             definition=move_s3_files_to_processing_folder.next(
-                truncate_and_load_redshift_table
+                sfn.Choice(self, "non-empty_manifest_file?")
+                .when(
+                    sfn.Condition.is_present(variable="$.redshift_manifest_file_name"),
+                    truncate_and_load_redshift_table,
+                )
+                .otherwise(empty_manifest_file)
             ),
             # role=self.lambda_redshift_access_role,  # somehow creates circular dependency
         )

@@ -13,25 +13,21 @@ s3_resource = boto3.resource("s3")
 sfn_client = boto3.client("stepfunctions")
 
 
-def rename_s3_files(s3_prefix_old: str, s3_prefix_new: str) -> int:
-    s3_bucket = s3_resource.Bucket(S3_BUCKET_NAME)
-    s3_file_count = 0
-    for s3_file_count, object_summary in enumerate(
-        s3_bucket.objects.filter(Prefix=s3_prefix_old), 1
-    ):  # uses pagination behind the scenes
-        s3_file_name_old = object_summary.key
-        s3_file_name_new = s3_file_name_old.replace(s3_prefix_old, s3_prefix_new)
-        s3_resource.Object(bucket_name=S3_BUCKET_NAME, key=s3_file_name_new).copy_from(
-            CopySource=f"{S3_BUCKET_NAME}/{s3_file_name_old}"
+def rename_s3_files(
+    s3_file_names: list[str], s3_folder_old: str, s3_folder_new: str
+) -> int:
+    for s3_file_name in s3_file_names:
+        s3_file_key = s3_file_name.replace(f"s3://{S3_BUCKET_NAME}/", "")
+        s3_file_key_new = s3_file_key.replace(s3_folder_old, s3_folder_new)
+        s3_resource.Object(bucket_name=S3_BUCKET_NAME, key=s3_file_key_new).copy_from(
+            CopySource=f"{S3_BUCKET_NAME}/{s3_file_key}"
         )
-        s3_resource.Object(bucket_name=S3_BUCKET_NAME, key=s3_file_name_old).delete()
+        s3_resource.Object(bucket_name=S3_BUCKET_NAME, key=s3_file_key).delete()
         print(
-            f"Renamed s3://{S3_BUCKET_NAME}/{s3_file_name_old} to "
-            f"s3://{S3_BUCKET_NAME}/{s3_file_name_new}"
+            f"Renamed s3://{S3_BUCKET_NAME}/{s3_file_key} to "
+            f"s3://{S3_BUCKET_NAME}/{s3_file_key_new}"
         )
-    if s3_file_count:
-        print(f"Successfully renamed {s3_file_count} files ✨")
-    return s3_file_count
+    print(f"Successfully renamed {len(s3_file_names)} files ✨")
 
 
 def lambda_handler(event, context) -> None:
@@ -62,6 +58,7 @@ def lambda_handler(event, context) -> None:
             taskToken=task_token,
             output='"json output of the task"',  # figure out what to write here such as completed statementId, table name
         )
+
         num_queries = len(
             json.loads(record["sql_queries"])
         )  # assumes that 'select count(*)' is last query
@@ -79,12 +76,30 @@ def lambda_handler(event, context) -> None:
             ExpressionAttributeValues={":rc": row_count},
             ExpressionAttributeNames={"#isp": "is_still_processing_sql?"},
         )
-        s3_prefix_processing = record["s3_prefix_processing"]
-        s3_prefix_processed = s3_prefix_processing.replace(
-            "/processing/", "/processed/"  # hard coded
+
+        redshift_manifest_file_name = record["redshift_manifest_file_name"]
+        redshift_manifest_file_key = redshift_manifest_file_name.replace(
+            f"s3://{S3_BUCKET_NAME}/", ""
+        )
+        redshift_manifest_file = s3_resource.Object(
+            bucket_name=S3_BUCKET_NAME, key=redshift_manifest_file_key
+        )
+        redshift_manifest_content = (
+            redshift_manifest_file.get()["Body"].read().decode("utf-8")
+        )
+        redshift_manifest_entries = json.loads(redshift_manifest_content)["entries"]
+        s3_files_loaded_into_redshift = [
+            dct["url"] for dct in redshift_manifest_entries
+        ]
+        rename_s3_files(
+            s3_file_names=s3_files_loaded_into_redshift,
+            s3_folder_old="/processing/",
+            s3_folder_new="/processed/",
         )
         rename_s3_files(
-            s3_prefix_old=s3_prefix_processing, s3_prefix_new=s3_prefix_processed
+            s3_file_names=[redshift_manifest_file_name],
+            s3_folder_old="/processing/",
+            s3_folder_new="/processed/",
         )
     elif redshift_queries_state in ["ABORTED", "FAILED"]:
         print(

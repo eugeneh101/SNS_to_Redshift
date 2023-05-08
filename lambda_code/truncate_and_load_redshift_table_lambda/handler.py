@@ -26,10 +26,9 @@ secrets_manager_client = boto3.client("secretsmanager")
 
 def lambda_handler(event, context) -> None:
     # print(f"event: {event}")
+    redshift_manifest_file_name = event["redshift_manifest_file_name"]
     s3_prefix_processing = event["s3_prefix_processing"]
-    assert (
-        "task_token" in event
-    ), f'"task_token" key must be in `event`. `event` is: {event}'
+    task_token = event["task_token"]
     sql_queries = []
     if TRUNCATE_TABLE:
         sql_queries.append(
@@ -70,9 +69,9 @@ def lambda_handler(event, context) -> None:
             + " UTC",  # sk in primary index
             "redshift_queries_id": response["Id"],  # pk in GSI
             "is_still_processing_sql?": "yes",  # sk in GSI
-            "task_token": event["task_token"],
+            "task_token": task_token,
             "sql_queries": json.dumps(sql_queries),
-            "s3_prefix_processing": s3_prefix_processing,  # needed by `redshift_queries_finished_lambda`
+            "redshift_manifest_file_name": redshift_manifest_file_name,  # needed by `redshift_queries_finished_lambda`
             "redshift_response": json.dumps(response),
             "delete_record_on": int(records_expires_on.timestamp()),
             "delete_record_on_human_readable": records_expires_on.strftime(
