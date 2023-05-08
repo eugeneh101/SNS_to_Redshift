@@ -38,45 +38,29 @@ class PreexistingStack(NestedStack):
             self,
             "RedshiftRole",
             assumed_by=iam.ServicePrincipal("redshift.amazonaws.com"),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name(
-                    "AmazonS3FullAccess"
-                ),  ### later principle of least privileges
-            ],
             role_name=environment["REDSHIFT_ROLE_NAME"],
         )
-
-        self.scheduled_eventbridge_event = events.Rule(
-            self,
-            "RunEvery1Minute",
-            event_bus=None,  # scheduled events must be on "default" bus
-            schedule=events.Schedule.rate(Duration.minutes(1)),
-        )
-
-        self.sns_topic_original = sns.Topic(
-            self, "SnsTopic", topic_name=environment["SNS_TOPIC_NAME"]
-        )
-
-        self.publish_sns_messages_lambda = _lambda.Function(
-            self,
-            "PublishSnsMessages",
-            runtime=_lambda.Runtime.PYTHON_3_9,
-            code=_lambda.Code.from_asset(
-                "lambda_code/publish_sns_messages_lambda",
-                exclude=[".venv/*"],
+        self.redshift_role.add_to_policy(
+            statement=iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:ListBucket"],
+                resources=["*"],
             ),
-            handler="handler.lambda_handler",
-            timeout=Duration.seconds(3),  # should be instantaneous
-            memory_size=128,
-            environment={
-                "SNS_NUM_MESSAGES_PER_MINUTE": json.dumps(
-                    environment["SNS_NUM_MESSAGES_PER_MINUTE"]
+        )
+        self.publish_to_sns_role = iam.Role(
+            self,
+            "PublishToSnsRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"  # write Cloudwatch logs
                 ),
-                "SNS_TOPIC_ARN": (
-                    f"arn:aws:sns:{environment['AWS_REGION']}:"
-                    f"{environment['AWS_ACCOUNT']}:{environment['SNS_TOPIC_NAME']}"
-                ),
-            },
+            ],
+        )
+        self.publish_to_sns_role.add_to_policy(
+            statement=iam.PolicyStatement(
+                actions=["sns:Publish"],
+                resources=["*"],
+            ),
         )
 
         self.redshift_cluster = redshift.CfnCluster(
@@ -89,9 +73,7 @@ class PreexistingStack(NestedStack):
             db_name=environment["REDSHIFT_DATABASE_NAME"],
             master_username=environment["REDSHIFT_USER"],
             master_user_password=environment["REDSHIFT_PASSWORD"],
-            iam_roles=[
-                self.redshift_role.role_arn,
-            ],
+            iam_roles=[self.redshift_role.role_arn],
             publicly_accessible=False,
         )
         self.redshift_secret = secretsmanager.Secret(
@@ -107,13 +89,46 @@ class PreexistingStack(NestedStack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
+        self.sns_topic = sns.Topic(
+            self, "SnsTopic", topic_name=environment["SNS_TOPIC_NAME"]
+        )
+
+        self.scheduled_eventbridge_event = events.Rule(
+            self,
+            "RunPeriodically",
+            event_bus=None,  # scheduled events must be on "default" bus
+            schedule=events.Schedule.rate(
+                Duration.minutes(environment["SNS_GENERATE_MESSAGES_EVERY_X_MINUTES"])
+            ),
+        )
+
+        self.publish_sns_messages_lambda = _lambda.Function(
+            self,
+            "PublishSnsMessages",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            code=_lambda.Code.from_asset(
+                "lambda_code/publish_sns_messages_lambda",
+                exclude=[".venv/*"],
+            ),
+            handler="handler.lambda_handler",
+            timeout=Duration.seconds(3),  # should be instantaneous
+            memory_size=128,
+            environment={
+                "SNS_NUM_MESSAGES": json.dumps(environment["SNS_NUM_MESSAGES"]),
+                "SNS_TOPIC_ARN": (
+                    f"arn:aws:sns:{environment['AWS_REGION']}:"
+                    f"{environment['AWS_ACCOUNT']}:{environment['SNS_TOPIC_NAME']}"
+                ),
+            },
+            role=self.publish_to_sns_role,
+        )
+
         # connect the AWS resources
         self.scheduled_eventbridge_event.add_target(
             events_targets.LambdaFunction(
                 handler=self.publish_sns_messages_lambda,
             )
         )
-        self.sns_topic_original.grant_publish(grantee=self.publish_sns_messages_lambda)
 
 
 class UpgradeStack(NestedStack):
@@ -125,38 +140,6 @@ class UpgradeStack(NestedStack):
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
-
-        self.lambda_redshift_access_role = iam.Role(
-            self,
-            "LambdaRedshiftAccessRole",
-            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name(
-                    "service-role/AWSLambdaBasicExecutionRole"  # write Cloudwatch logs
-                ),
-            ],
-        )
-        self.lambda_redshift_access_role.add_to_policy(
-            statement=iam.PolicyStatement(
-                actions=[
-                    "redshift:GetClusterCredentials",
-                    "redshift-data:ExecuteStatement",
-                    "redshift-data:BatchExecuteStatement",
-                    "redshift-data:GetStatementResult",
-                    "redshift-data:DescribeStatement",  # only needed for Trigger
-                    "iam:GetRole",  # needed to get Redshift role ARN
-                    "secretsmanager:DescribeSecret",  # needed to get secret ARN
-                    "secretsmanager:GetSecretValue",  # needed for authenticating BatchExecuteStatement
-                ],
-                resources=["*"],
-            ),
-        )
-        self.lambda_redshift_access_role.add_to_policy(
-            statement=iam.PolicyStatement(
-                actions=["states:SendTaskSuccess", "states:SendTaskFailure"],
-                resources=["*"],
-            ),
-        )
 
         self.sns_write_to_firehose_role = iam.Role(
             self,
@@ -188,19 +171,80 @@ class UpgradeStack(NestedStack):
         self.firehose_write_to_s3_role.add_to_policy(
             statement=iam.PolicyStatement(
                 actions=[
-                    "s3:AbortMultipartUpload",
-                    "s3:GetBucketLocation",
-                    "s3:GetObject",
-                    "s3:ListBucket",
-                    "s3:ListBucketMultipartUploads",
+                    # "s3:AbortMultipartUpload",
+                    # "s3:GetBucketLocation",
+                    # "s3:GetObject",
+                    # "s3:ListBucket",
+                    # "s3:ListBucketMultipartUploads",
                     "s3:PutObject",
+                    "logs:PutLogEvents",
                 ],
                 resources=["*"],
             ),
         )
-        self.firehose_write_to_s3_role.add_to_policy(
+        self.lambda_redshift_access_role = iam.Role(
+            self,
+            "LambdaRedshiftAccessRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"  # write Cloudwatch logs
+                ),
+            ],
+        )
+        # for `configure_redshift_table_lambda` and `truncate_and_load_redshift_table_lambda`
+        self.lambda_redshift_access_role.add_to_policy(
             statement=iam.PolicyStatement(
-                actions=["logs:PutLogEvents"],
+                actions=[
+                    # for `configure_redshift_table_lambda`
+                    "redshift-data:DescribeStatement",
+                    # for `configure_redshift_table_lambda` and `truncate_and_load_redshift_table_lambda`
+                    "redshift:GetClusterCredentials",
+                    "redshift-data:ExecuteStatement",
+                    "redshift-data:BatchExecuteStatement",
+                    "secretsmanager:DescribeSecret",  # needed to get secret ARN
+                    "secretsmanager:GetSecretValue",  # needed for authenticating BatchExecuteStatement
+                    # for `truncate_and_load_redshift_table_lambda`
+                    "iam:GetRole",  # needed to get Redshift role ARN
+                ],
+                resources=["*"],
+            ),
+        )
+        # for `move_s3_files_to_processing_folder_lambda` and `redshift_queries_finished_lambda`
+        self.lambda_redshift_access_role.add_to_policy(
+            statement=iam.PolicyStatement(
+                actions=[
+                    "s3:GetObject*",
+                    # "s3:GetBucket*",
+                    "s3:List*",
+                    "s3:DeleteObject*",
+                    "s3:PutObject",
+                    # "s3:PutObjectLegalHold",
+                    # "s3:PutObjectRetention",
+                    # "s3:PutObjectTagging",
+                    # "s3:PutObjectVersionTagging",
+                    # "s3:Abort*",
+                ],
+                resources=["*"],
+            ),
+        )
+        # for `truncate_and_load_redshift_table_lambda`
+        self.lambda_redshift_access_role.add_to_policy(
+            statement=iam.PolicyStatement(
+                actions=["dynamodb:PutItem"],
+                resources=["*"],
+            ),
+        )
+        # for `redshift_queries_finished_lambda`
+        self.lambda_redshift_access_role.add_to_policy(
+            statement=iam.PolicyStatement(
+                actions=[
+                    "redshift-data:GetStatementResult",
+                    "states:SendTaskSuccess",
+                    "states:SendTaskFailure",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:Query",
+                ],
                 resources=["*"],
             ),
         )
@@ -301,7 +345,7 @@ class UpgradeStack(NestedStack):
             memory_size=128,  # in MB
             environment={
                 "S3_BUCKET_NAME": environment["S3_BUCKET_NAME"],
-                "S3_BUCKET_PREFIX": f"sns_source/unprocessed/topic={environment['SNS_TOPIC_NAME']}/",
+                "S3_BUCKET_PREFIX": f"sns_source/topic={environment['SNS_TOPIC_NAME']}/unprocessed/",
             },
             role=self.lambda_redshift_access_role,
             retry_attempts=0,
@@ -360,7 +404,7 @@ class UpgradeStack(NestedStack):
             self,
             "move_s3_files_to_processing_folder",
             lambda_function=self.move_s3_files_to_processing_folder_lambda,
-            input_path=sfn.JsonPath.DISCARD,
+            input_path=sfn.JsonPath.DISCARD,  # maybe figure out what input payload would be
             payload_response_only=True,
             timeout=self.move_s3_files_to_processing_folder_lambda.timeout,
             retry_on_service_exceptions=False,
@@ -385,17 +429,10 @@ class UpgradeStack(NestedStack):
             definition=move_s3_files_to_processing_folder.next(
                 truncate_and_load_redshift_table
             ),
+            # role=self.lambda_redshift_access_role,  # somehow creates circular dependency
         )
 
         # connect the AWS resources
-        self.scheduled_eventbridge_event.add_target(
-            target=events_targets.SfnStateMachine(
-                self.state_machine,
-                # input=events.RuleTargetInput.from_object({"SomeParam": "SomeValue"}),
-                # dead_letter_queue=dlq,
-                # role=role
-            )
-        )
         self.trigger_configure_redshift_table_lambda = triggers.Trigger(
             self,
             "TriggerConfigureRedshiftTableLambda",
@@ -417,7 +454,7 @@ class UpgradeStack(NestedStack):
                 log_group_name="/aws/kinesisfirehose/firehose-to-s3-cdk",  # hard coded
                 log_stream_name="DestinationDelivery",  # hard coded
             ),
-            prefix=f"sns_source/unprocessed/topic={environment['SNS_TOPIC_NAME']}/",
+            prefix=f"sns_source/topic={environment['SNS_TOPIC_NAME']}/unprocessed/",
             # do we need processor?
             # error_output_prefix="errorOutputPrefix",
             # compression_format="compressionFormat",
@@ -438,11 +475,13 @@ class UpgradeStack(NestedStack):
             raw_message_delivery=True,
             # dead_letter_queue=None,
         )
-        self.s3_bucket_for_sns_messages.grant_read_write(
-            identity=self.move_s3_files_to_processing_folder_lambda
-        )
-        self.dynamodb_table.grant_read_write_data(
-            grantee=self.truncate_and_load_redshift_table_lambda.role
+        self.scheduled_eventbridge_event.add_target(
+            target=events_targets.SfnStateMachine(
+                self.state_machine,
+                # input=events.RuleTargetInput.from_object({"SomeParam": "SomeValue"}),
+                # dead_letter_queue=dlq,
+                # role=role
+            )
         )
         self.event_rule_to_trigger_redshift_queries_finished_lambda.add_event_pattern(
             source=["aws.redshift-data"],
@@ -487,18 +526,6 @@ class SnsToRedshiftStack(Stack):
         self.upgrade_stack.node.add_dependency(
             self.preexisting_stack
         )  # preexisting stack is deployed first
-
-        # write Cloudformation Outputs
-        self.output_firehose_name = CfnOutput(
-            self,
-            "FirehoseName",  # Output omits underscores and hyphens
-            value=self.upgrade_stack.firehose_with_s3_target.delivery_stream_name,
-        )
-        self.output_s3_bucket_name = CfnOutput(
-            self,
-            "S3BucketName",  # Output omits underscores and hyphens
-            value=self.upgrade_stack.s3_bucket_for_sns_messages.bucket_name,
-        )
 
 
 # self.queue_for_sns_messages = sqs.Queue(  ### need DLQ
