@@ -449,7 +449,7 @@ class UpgradeStack(NestedStack):
             "TriggerConfigureRedshiftTableLambda",
             handler=self.configure_redshift_table_lambda,  # this is underlying Lambda
             # runs once after Redshift cluster created
-            execute_after=[self.scheduled_eventbridge_event],
+            execute_before=[self.scheduled_eventbridge_event],
             # invocation_type=triggers.InvocationType.REQUEST_RESPONSE,
             # timeout=self.configure_redshift_table_lambda.timeout,
         )
@@ -465,7 +465,7 @@ class UpgradeStack(NestedStack):
                 log_group_name="/aws/kinesisfirehose/firehose-to-s3-cdk",  # hard coded
                 log_stream_name="DestinationDelivery",  # hard coded
             ),
-            prefix=f"sns_source/topic={environment['SNS_TOPIC_NAME']}/unprocessed/",
+            prefix=f"sns_source/topic={environment['SNS_TOPIC_NAME']}/unprocessed/",  # hard coded
             # do we need processor?
             # error_output_prefix="errorOutputPrefix",
             # compression_format="compressionFormat",
