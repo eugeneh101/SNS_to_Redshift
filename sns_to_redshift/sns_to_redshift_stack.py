@@ -539,7 +539,7 @@ class SnsToRedshiftStack(Stack):
         )  # preexisting stack is deployed first
 
 
-# self.queue_for_sns_messages = sqs.Queue(  ### need DLQ
+`# self.queue_for_sns_messages = sqs.Queue(  ### need DLQ
 #     self,
 #     "QueueForSnsMessages",
 #     removal_policy=RemovalPolicy.DESTROY,
@@ -578,3 +578,4 @@ class SnsToRedshiftStack(Stack):
 #     key="BUCKET_NAME",
 #     value=self.s3_bucket_for_sqs_to_redshift.bucket_name,
 # )
+`
