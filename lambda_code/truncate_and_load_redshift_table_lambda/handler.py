@@ -27,7 +27,6 @@ secrets_manager_client = boto3.client("secretsmanager")
 def lambda_handler(event, context) -> None:
     # print(f"event: {event}")
     redshift_manifest_file_name = event["redshift_manifest_file_name"]
-    s3_prefix_processing = event["s3_prefix_processing"]
     task_token = event["task_token"]
     sql_queries = []
     if TRUNCATE_TABLE:
@@ -39,9 +38,9 @@ def lambda_handler(event, context) -> None:
         [
             f"""
         copy {REDSHIFT_DATABASE_NAME}.{REDSHIFT_SCHEMA_NAME}.{REDSHIFT_TABLE_NAME}
-        from 's3://{S3_BUCKET_NAME}/{s3_prefix_processing}'
+        from '{redshift_manifest_file_name}'
         iam_role '{redshift_role_arn}'
-        format as {FILE_TYPE} {REDSHIFT_COPY_ADDITIONAL_ARGUMENTS};
+        format as {FILE_TYPE} {REDSHIFT_COPY_ADDITIONAL_ARGUMENTS} manifest;
         """,  ### eventually put REDSHIFT_DATABASE_NAME, REDSHIFT_SCHEMA_NAME, REDSHIFT_TABLE_NAME as event payload
             f"select count(*) from {REDSHIFT_DATABASE_NAME}.{REDSHIFT_SCHEMA_NAME}.{REDSHIFT_TABLE_NAME};",
         ]
