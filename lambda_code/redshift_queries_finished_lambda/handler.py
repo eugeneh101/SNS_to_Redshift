@@ -3,7 +3,6 @@ import os
 
 import boto3
 
-
 DYNAMODB_TABLE_NAME = os.environ["DYNAMODB_TABLE_NAME"]
 S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
 
@@ -53,18 +52,27 @@ def lambda_handler(event, context) -> None:
     record = response["Items"][0]
     task_token = record["task_token"]
     if redshift_queries_state == "FINISHED":
-        print(f"Succeeded with `redshift_queries_id` {redshift_queries_id}")
-        sfn_client.send_task_success(
-            taskToken=task_token,
-            output='"json output of the task"',  # figure out what to write here such as completed statementId, table name
-        )
-
         num_queries = len(
             json.loads(record["sql_queries"])
         )  # assumes that 'select count(*)' is last query
         row_count = redshift_data_client.get_statement_result(
             Id=f"{redshift_queries_id}:{num_queries}"
         )["Records"][0][0]["longValue"]
+
+        sfn_client.send_task_success(
+            taskToken=task_token,
+            output=json.dumps(
+                {  # figure out what to write here such as completed statementId
+                    "table_load_success": True,
+                    "full_table_name": record["full_table_name"],
+                    "row_count": row_count,
+                    "truncate_table": record["truncate_table"],
+                    "sns_topic_name": record["sns_topic_name"],
+                }
+            ),
+        )
+        print(f"Succeeded with `redshift_queries_id` {redshift_queries_id}")
+
         dynamodb_resource.Table(name=DYNAMODB_TABLE_NAME).update_item(
             Key={
                 "full_table_name": record["full_table_name"],

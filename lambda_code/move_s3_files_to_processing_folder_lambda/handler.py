@@ -5,7 +5,7 @@ from typing import Union
 import boto3
 
 S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
-S3_BUCKET_PREFIX = os.environ["S3_BUCKET_PREFIX"]
+S3_BUCKET_PREFIX_FOR_FIREHOSE = os.environ["S3_BUCKET_PREFIX_FOR_FIREHOSE"]
 s3 = boto3.resource("s3")
 
 
@@ -33,8 +33,13 @@ def rename_s3_files(s3_prefix_old: str, s3_prefix_new: str) -> int:
 
 
 def lambda_handler(event, context) -> dict[str, Union[str, dict[str, str]]]:
+    s3_bucket_prefix_for_firehose = S3_BUCKET_PREFIX_FOR_FIREHOSE.format(
+        SNS_TOPIC_NAME=event["eventbridge_payload"]["SNS_TOPIC_NAME"]
+    )
     s3_prefix_processing = (
-        S3_BUCKET_PREFIX.replace("/unprocessed/", "/processing/")  # hard coded
+        s3_bucket_prefix_for_firehose.replace(
+            "/unprocessed/", "/processing/"
+        )  # hard coded
         + "firehose_files/"
     )
     s3_prefix_unexpected = s3_prefix_processing.replace(
@@ -46,11 +51,11 @@ def lambda_handler(event, context) -> dict[str, Union[str, dict[str, str]]]:
     )
     if s3_file_count:
         print(
-            f"There should be 0 files in {S3_BUCKET_PREFIX} but got "
+            f"There should be 0 files in {s3_bucket_prefix_for_firehose} but got "
             f"{s3_file_count} files, so moved them to {s3_prefix_unexpected}"
         )
     s3_file_count, s3_files_to_load_into_redshift = rename_s3_files(
-        s3_prefix_old=S3_BUCKET_PREFIX,
+        s3_prefix_old=s3_bucket_prefix_for_firehose,
         s3_prefix_new=s3_prefix_processing,
     )
     if s3_file_count:
@@ -76,9 +81,14 @@ def lambda_handler(event, context) -> dict[str, Union[str, dict[str, str]]]:
         "s3_file_count": s3_file_count,
         "s3_files_to_load_to_redshift": s3_files_to_load_into_redshift,
         "other_metadata": {
-            "s3_prefix_unprocessed": S3_BUCKET_PREFIX,
+            "s3_prefix_unprocessed": s3_bucket_prefix_for_firehose,
             "s3_prefix_unexpected": s3_prefix_unexpected,
         },
+        "eventbridge_payload": event["eventbridge_payload"],
+        "redshift_load_every_x_seconds": event["eventbridge_payload"][
+            "REDSHIFT_LOAD_EVERY_X_MINUTES"
+        ]
+        * 60,  # needed by next Lambda's timeout in SFN
     }
     if s3_file_count:
         response[
