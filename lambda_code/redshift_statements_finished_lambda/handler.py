@@ -31,32 +31,32 @@ def rename_s3_files(
 
 def lambda_handler(event, context) -> None:
     # print("event", event)
-    redshift_queries_state = event["detail"]["state"]
-    if redshift_queries_state in ["SUBMITTED", "PICKED", "STARTED"]:
-        print(f"Redshift state is {redshift_queries_state}, so ignore")
+    redshift_statements_state = event["detail"]["state"]
+    if redshift_statements_state in ["SUBMITTED", "PICKED", "STARTED"]:
+        print(f"Redshift state is {redshift_statements_state}, so ignore")
         return
-    redshift_queries_id = event["detail"]["statementId"]
+    redshift_statements_id = event["detail"]["statementId"]
 
     response = dynamodb_resource.Table(name=DYNAMODB_TABLE_NAME).query(
         IndexName="is_still_processing_sql",  # hard coded
-        KeyConditionExpression=boto3.dynamodb.conditions.Key("redshift_queries_id").eq(
-            redshift_queries_id
-        ),
+        KeyConditionExpression=boto3.dynamodb.conditions.Key(
+            "redshift_statements_id"
+        ).eq(redshift_statements_id),
         # Select='ALL_ATTRIBUTES'|'ALL_PROJECTED_ATTRIBUTES'|'SPECIFIC_ATTRIBUTES'|'COUNT',
         # AttributesToGet=['string'],
     )
     assert response["Count"] == 1, (
-        f'For `redshift_queries_id` "{redshift_queries_id}", there should be exactly 1 record '
+        f'For `redshift_statements_id` "{redshift_statements_id}", there should be exactly 1 record '
         f"but got {response['Count']} records. The records are: {response['Items']}"
     )
     record = response["Items"][0]
     task_token = record["task_token"]
-    if redshift_queries_state == "FINISHED":
-        num_queries = len(
-            json.loads(record["sql_queries"])
-        )  # assumes that 'select count(*)' is last query
+    if redshift_statements_state == "FINISHED":
+        num_statements = len(
+            json.loads(record["sql_statements"])
+        )  # assumes that 'select count(*)' is last statement
         row_count = redshift_data_client.get_statement_result(
-            Id=f"{redshift_queries_id}:{num_queries}"
+            Id=f"{redshift_statements_id}:{num_statements}"
         )["Records"][0][0]["longValue"]
 
         sfn_client.send_task_success(
@@ -71,7 +71,7 @@ def lambda_handler(event, context) -> None:
                 }
             ),
         )
-        print(f"Succeeded with `redshift_queries_id` {redshift_queries_id}")
+        print(f"Succeeded with `redshift_staetments_id` {redshift_statements_id}")
 
         dynamodb_resource.Table(name=DYNAMODB_TABLE_NAME).update_item(
             Key={
@@ -109,9 +109,10 @@ def lambda_handler(event, context) -> None:
             s3_folder_old="/processing/",
             s3_folder_new="/processed/",
         )
-    elif redshift_queries_state in ["ABORTED", "FAILED"]:
+    elif redshift_statements_state in ["ABORTED", "FAILED"]:
         print(
-            f"Failed with `redshift_queries_id` {redshift_queries_id} with state being {redshift_queries_state}"
+            f"Failed with `redshift_statements_id` {redshift_statements_id} "
+            f"with state being {redshift_statements_state}"
         )
         sfn_client.send_task_failure(
             taskToken=task_token,
@@ -120,10 +121,10 @@ def lambda_handler(event, context) -> None:
         )
     else:  # 'ALL'
         print(
-            f"Failed with `redshift_queries_id` {redshift_queries_id} with state being {redshift_queries_state}"
+            f"Failed with `redshift_statements_id` {redshift_statements_id} with state being {redshift_statements_state}"
         )
         sfn_client.send_task_failure(
             taskToken=task_token,
-            error=f'"`redshift_queries_state` is {redshift_queries_state}"',  ### figure out what to write here
+            error=f'"`redshift_statements_state` is {redshift_statements_state}"',  ### figure out what to write here
             cause='"string"',  ### figure out what to write here
         )

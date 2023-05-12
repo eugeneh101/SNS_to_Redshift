@@ -105,7 +105,7 @@ class PreexistingStack(NestedStack):
                 exclude=[".venv/*"],
             ),
             handler="handler.lambda_handler",
-            timeout=Duration.seconds(3),  # should be instantaneous
+            timeout=Duration.seconds(3),  # pretty fast
             memory_size=128,
             role=self.lambda_publish_to_sns_role,
         )
@@ -269,7 +269,7 @@ class UpgradeStack(NestedStack):
                 resources=["*"],
             ),
         )
-        # for `move_s3_files_to_processing_folder_lambda` and `redshift_queries_finished_lambda`
+        # for `move_s3_files_to_processing_folder_lambda` and `redshift_statements_finished_lambda`
         self.lambda_redshift_access_role.add_to_policy(
             statement=iam.PolicyStatement(
                 actions=[
@@ -288,7 +288,7 @@ class UpgradeStack(NestedStack):
                 resources=["*"],
             ),
         )
-        # for `redshift_queries_finished_lambda`
+        # for `redshift_statements_finished_lambda`
         self.lambda_redshift_access_role.add_to_policy(
             statement=iam.PolicyStatement(
                 actions=[
@@ -320,7 +320,7 @@ class UpgradeStack(NestedStack):
 
         self.dynamodb_table = dynamodb.Table(
             self,
-            "DynamoDBTableForRedshiftQueries",
+            "DynamoDBTableForRedshiftStatements",
             table_name=environment["UPGRADE_STACK_VARS"]["DYNAMODB_TABLE_NAME"],
             partition_key=dynamodb.Attribute(  # hard coded
                 name="full_table_name", type=dynamodb.AttributeType.STRING
@@ -334,17 +334,17 @@ class UpgradeStack(NestedStack):
         self.dynamodb_table.add_global_secondary_index(
             index_name="is_still_processing_sql",  # hard coded
             partition_key=dynamodb.Attribute(  # hard coded
-                name="redshift_queries_id", type=dynamodb.AttributeType.STRING
+                name="redshift_statements_id", type=dynamodb.AttributeType.STRING
             ),
             sort_key=dynamodb.Attribute(  # hard coded
                 name="is_still_processing_sql?", type=dynamodb.AttributeType.STRING
             ),
         )
 
-        self.event_rule_to_trigger_redshift_queries_finished_lambda = events.Rule(
+        self.event_rule_to_trigger_redshift_statements_finished_lambda = events.Rule(
             self,
-            "EventRuleToTriggerRedshiftQueriesFinishedLambda",
-            rule_name="redshift-queries-update-rule",
+            "EventRuleToTriggerRedshiftStatementsFinishedLambda",
+            rule_name="redshift-statements-update-rule",
             event_bus=None,  # Redshift update messages go to "default" bus
         )
 
@@ -403,7 +403,7 @@ class UpgradeStack(NestedStack):
                 exclude=[".venv/*"],
             ),
             handler="handler.lambda_handler",
-            timeout=Duration.seconds(3),  # should be instantaneous
+            timeout=Duration.seconds(3),  # pretty fast
             memory_size=128,  # in MB
             environment={
                 "DYNAMODB_TABLE_NAME": environment["UPGRADE_STACK_VARS"][
@@ -426,16 +426,16 @@ class UpgradeStack(NestedStack):
             role=self.lambda_redshift_access_role,
             retry_attempts=0,
         )
-        self.redshift_queries_finished_lambda = _lambda.Function(
+        self.redshift_statements_finished_lambda = _lambda.Function(
             self,
-            "RedshiftQueriesFinished",
+            "RedshiftStatementsFinished",
             runtime=_lambda.Runtime.PYTHON_3_9,
             code=_lambda.Code.from_asset(
-                "lambda_code/redshift_queries_finished_lambda",
+                "lambda_code/redshift_statements_finished_lambda",
                 exclude=[".venv/*"],
             ),
             handler="handler.lambda_handler",
-            timeout=Duration.seconds(3),  # should be instantaneous
+            timeout=Duration.seconds(3),  # pretty fast
             memory_size=128,  # in MB
             environment={
                 "DYNAMODB_TABLE_NAME": environment["UPGRADE_STACK_VARS"][
@@ -540,7 +540,7 @@ class UpgradeStack(NestedStack):
             # invocation_type=triggers.InvocationType.REQUEST_RESPONSE,
             # timeout=self.configure_redshift_table_lambda.timeout,
         )
-        self.event_rule_to_trigger_redshift_queries_finished_lambda.add_event_pattern(
+        self.event_rule_to_trigger_redshift_statements_finished_lambda.add_event_pattern(
             source=["aws.redshift-data"],
             detail_type=["Redshift Data Statement Status Change"],
             detail={
@@ -557,9 +557,9 @@ class UpgradeStack(NestedStack):
             ),
             account=[environment["SHARED_STACK_VARS"]["AWS_ACCOUNT"]],
         )
-        self.event_rule_to_trigger_redshift_queries_finished_lambda.add_target(
+        self.event_rule_to_trigger_redshift_statements_finished_lambda.add_target(
             events_targets.LambdaFunction(
-                handler=self.redshift_queries_finished_lambda,
+                handler=self.redshift_statements_finished_lambda,
                 # dead_letter_queue=None,
             )
         )

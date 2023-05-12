@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 
 import boto3
@@ -12,13 +13,18 @@ redshift_data_client = boto3.client("redshift-data")
 secrets_manager_client = boto3.client("secretsmanager")
 
 
+def remove_extra_whitespaces(sql_statement: str) -> str:
+    "Be careful to avoid unexpected problems"
+    return re.sub(r"\s+", " ", sql_statement)
+
+
 def execute_sql_statement(sql_statement: str, redshift_database_name: str) -> None:
     redshift_secret_arn = secrets_manager_client.describe_secret(
         SecretId=REDSHIFT_SECRET_NAME
     )["ARN"]
     response = redshift_data_client.execute_statement(
         ClusterIdentifier=REDSHIFT_CLUSTER_NAME,
-        SecretArn=redshift_secret_arn,
+        SecretArn=redshift_secret_arn,  # secret currently supports 1 database
         Database=redshift_database_name,
         Sql=sql_statement,
     )
@@ -55,6 +61,6 @@ def lambda_handler(event, context) -> None:
         ]
         for sql_statement in sql_statements:
             execute_sql_statement(
-                sql_statement=sql_statement,
+                sql_statement=remove_extra_whitespaces(sql_statement=sql_statement),
                 redshift_database_name=redshift_database_name,
             )
