@@ -1,33 +1,56 @@
 {
-  "app": "python3 app.py",
-  "context": {
-    "environment": {
-      "AWS_REGION": "us-east-1",
-
-      "REDSHIFT_CLUSTER_NAME": "redshift-with-sns-table",
-      "REDSHIFT_USER": "admin",
-      "REDSHIFT_PASSWORD": "Password1",
-      "REDSHIFT_DATABASE_NAME": "dev",
-      "REDSHIFT_ROLE_NAME": "redshift-role",
-      "REDSHIFT_SCHEMA_NAME": "public",
-      "REDSHIFT_TABLE_NAME": "sns_table",
-
-      "REDSHIFT_SECRET_NAME": "redshift-login-secret",
-
-      "SNS_TOPIC_NAME": "sns-to-firehose-cdk",
-      "SNS_GENERATE_MESSAGES_EVERY_X_MINUTES": 1,
-      "SNS_NUM_MESSAGES": 100,
-
-      "REDSHIFT_LOAD_EVERY_X_MINUTES": 5,
-
-      "S3_BUCKET_NAME": "sns-to-firehose-bucket-cdk",
-
-      "DYNAMODB_TABLE_NAME": "current-and-historical-redshift-load-jobs",
-      "DYNAMODB_TTL_IN_DAYS": 7,
-
-      "TRUNCATE_TABLE": false,
-      "FILE_TYPE": "json",
-      "REDSHIFT_COPY_ADDITIONAL_ARGUMENTS": "'auto ignorecase'"
+    "app": "python3 app.py",
+    "context": {
+        "environment": {
+            "SHARED_STACK_VARS": {
+                "AWS_REGION": "us-east-1",
+                "REDSHIFT_CLUSTER_NAME": "redshift-with-sns-table",
+                "REDSHIFT_SECRET_NAME": "redshift-login-secret",
+                "REDSHIFT_ROLE_NAME": "redshift-role",
+                "DETAILS_ON_TOPICS": [
+                    {
+                        "SNS_TOPIC_NAME": "stock-data-topic",
+                        "SNS_GENERATE_MESSAGES_EVERY_X_MINUTES": 1,
+                        "SNS_NUM_MESSAGES": 100,
+                        "REDSHIFT_DATABASE_NAME": "dev",
+                        "REDSHIFT_SCHEMA_NAME": "finance",
+                        "REDSHIFT_TABLE_NAME": "stock_table",
+                        "REDSHIFT_TABLE_COLUMNS_AND_TYPES": "ticker_symbol varchar(4), sector varchar(50), change float, price int",
+                        "REDSHIFT_LOAD_EVERY_X_MINUTES": 5,
+                        "TRUNCATE_TABLE": false,
+                        "FILE_TYPE": "json",
+                        "REDSHIFT_COPY_ADDITIONAL_ARGUMENTS": "'auto ignorecase'"
+                    },
+                    {
+                        "SNS_TOPIC_NAME": "game-data-topic",
+                        "SNS_GENERATE_MESSAGES_EVERY_X_MINUTES": 2,
+                        "SNS_NUM_MESSAGES": 400,
+                        "REDSHIFT_DATABASE_NAME": "dev",
+                        "REDSHIFT_SCHEMA_NAME": "entertainment",
+                        "REDSHIFT_TABLE_NAME": "game_table",
+                        "REDSHIFT_TABLE_COLUMNS_AND_TYPES": "console varchar(20), genre varchar(20), year int, sales int",
+                        "REDSHIFT_LOAD_EVERY_X_MINUTES": 3,
+                        "TRUNCATE_TABLE": false,
+                        "FILE_TYPE": "json",
+                        "REDSHIFT_COPY_ADDITIONAL_ARGUMENTS": "'auto ignorecase'"
+                    }
+                ]
+            },
+            "PREEXISTING_STACK_VARS": {
+                "REDSHIFT_USER": "admin",
+                "REDSHIFT_PASSWORD": "Password1",
+                "REDSHIFT_DATABASE_NAME": "dev",
+                "EVENTBRIDGE_SFN_ROLE_NAME": "eventbridge_sfn_role"
+            },
+            "UPGRADE_STACK_VARS": {
+                "S3_BUCKET_NAME": "sns-to-firehose-bucket",
+                "S3_BUCKET_PREFIX_FOR_FIREHOSE": "sns_source/topic={SNS_TOPIC_NAME}/unprocessed/",
+                "FIREHOSE_BUFFER_INTERVAL_IN_SECONDS": 60,
+                "FIREHOSE_BUFFER_SIZE_IN_MBS": 1,
+                "DYNAMODB_TABLE_NAME": "current-and-historical-redshift-load-jobs",
+                "DYNAMODB_TTL_IN_DAYS": 7,
+                "STEP_FUNCTION_NAME": "load_redshift_steps"
+            }
+        }
     }
-  }
 }
