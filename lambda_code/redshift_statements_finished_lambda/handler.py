@@ -12,6 +12,23 @@ s3_resource = boto3.resource("s3")
 sfn_client = boto3.client("stepfunctions")
 
 
+def get_s3_files_loaded_into_redshift(
+    redshift_manifest_file_name: str,
+) -> list[str]:
+    redshift_manifest_file_key = redshift_manifest_file_name.replace(
+        f"s3://{S3_BUCKET_NAME}/", ""
+    )
+    redshift_manifest_file = s3_resource.Object(
+        bucket_name=S3_BUCKET_NAME, key=redshift_manifest_file_key
+    )
+    redshift_manifest_content = (
+        redshift_manifest_file.get()["Body"].read().decode("utf-8")
+    )
+    redshift_manifest_entries = json.loads(redshift_manifest_content)["entries"]
+    s3_files_loaded_into_redshift = [dct["url"] for dct in redshift_manifest_entries]
+    return s3_files_loaded_into_redshift
+
+
 def rename_s3_files(
     s3_file_names: list[str], s3_folder_old: str, s3_folder_new: str
 ) -> int:
@@ -86,19 +103,9 @@ def lambda_handler(event, context) -> None:
         )
 
         redshift_manifest_file_name = record["redshift_manifest_file_name"]
-        redshift_manifest_file_key = redshift_manifest_file_name.replace(
-            f"s3://{S3_BUCKET_NAME}/", ""
+        s3_files_loaded_into_redshift = get_s3_files_loaded_into_redshift(
+            redshift_manifest_file_name=redshift_manifest_file_name
         )
-        redshift_manifest_file = s3_resource.Object(
-            bucket_name=S3_BUCKET_NAME, key=redshift_manifest_file_key
-        )
-        redshift_manifest_content = (
-            redshift_manifest_file.get()["Body"].read().decode("utf-8")
-        )
-        redshift_manifest_entries = json.loads(redshift_manifest_content)["entries"]
-        s3_files_loaded_into_redshift = [
-            dct["url"] for dct in redshift_manifest_entries
-        ]
         rename_s3_files(
             s3_file_names=s3_files_loaded_into_redshift,
             s3_folder_old="/processing/",
@@ -121,7 +128,8 @@ def lambda_handler(event, context) -> None:
         )
     else:  # 'ALL'
         print(
-            f"Failed with `redshift_statements_id` {redshift_statements_id} with state being {redshift_statements_state}"
+            f"Failed with `redshift_statements_id` {redshift_statements_id} "
+            f"with state being {redshift_statements_state}"
         )
         sfn_client.send_task_failure(
             taskToken=task_token,

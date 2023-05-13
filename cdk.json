@@ -4,7 +4,7 @@
         "environment": {
             "SHARED_STACK_VARS": {
                 "AWS_REGION": "us-east-1",
-                "REDSHIFT_CLUSTER_NAME": "redshift-with-sns-table",
+                "REDSHIFT_CLUSTER_NAME": "redshift-with-sns-tables",
                 "REDSHIFT_SECRET_NAME": "redshift-login-secret",
                 "REDSHIFT_ROLE_NAME": "redshift-role",
                 "DETAILS_ON_TOPICS": [
@@ -39,8 +39,7 @@
             "PREEXISTING_STACK_VARS": {
                 "REDSHIFT_USER": "admin",
                 "REDSHIFT_PASSWORD": "Password1",
-                "REDSHIFT_DATABASE_NAME": "dev",
-                "EVENTBRIDGE_SFN_ROLE_NAME": "eventbridge_sfn_role"
+                "REDSHIFT_DATABASE_NAME": "dev"
             },
             "UPGRADE_STACK_VARS": {
                 "S3_BUCKET_NAME": "sns-to-firehose-bucket",
@@ -48,8 +47,7 @@
                 "FIREHOSE_BUFFER_INTERVAL_IN_SECONDS": 60,
                 "FIREHOSE_BUFFER_SIZE_IN_MBS": 1,
                 "DYNAMODB_TABLE_NAME": "current-and-historical-redshift-load-jobs",
-                "DYNAMODB_TTL_IN_DAYS": 7,
-                "STEP_FUNCTION_NAME": "load_redshift_steps"
+                "DYNAMODB_TTL_IN_DAYS": 7
             }
         }
     }

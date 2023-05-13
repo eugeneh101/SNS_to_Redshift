@@ -116,14 +116,14 @@ class PreexistingStack(NestedStack):
         for topic_details in environment["SHARED_STACK_VARS"]["DETAILS_ON_TOPICS"]:
             sns_topic_name = topic_details["SNS_TOPIC_NAME"]
             sns_topic = sns.Topic(
-                self, f"SnsTopic-{sns_topic_name}", topic_name=sns_topic_name
+                self, f"SnsTopic--{sns_topic_name}", topic_name=sns_topic_name
             )
             self.sns_topics[sns_topic_name] = sns_topic
 
             scheduled_eventbridge_rule = events.Rule(
                 self,
-                f"RunPeriodicallyForTopic-{sns_topic_name}",
-                rule_name=f"publish-sns-messages-to-{sns_topic_name}",
+                f"RunPeriodicallyForTopic--{sns_topic_name}",
+                rule_name=f"start-publishing-messages-to-topic--{sns_topic_name}",
                 event_bus=None,  # scheduled events must be on "default" bus
                 schedule=events.Schedule.rate(
                     Duration.minutes(
@@ -184,9 +184,7 @@ class UpgradeStack(NestedStack):
                     f"states.{environment['SHARED_STACK_VARS']['AWS_REGION']}.amazonaws.com"
                 ),
             ),
-            role_name=environment["PREEXISTING_STACK_VARS"][
-                "EVENTBRIDGE_SFN_ROLE_NAME"
-            ],
+            role_name="eventbridge_sfn_role",  # hard coded
         )
         self.eventbridge_sfn_role.add_to_policy(
             statement=iam.PolicyStatement(  # Eventbridge trigger SFN
@@ -344,7 +342,7 @@ class UpgradeStack(NestedStack):
         self.event_rule_to_trigger_redshift_statements_finished_lambda = events.Rule(
             self,
             "EventRuleToTriggerRedshiftStatementsFinishedLambda",
-            rule_name="redshift-statements-update-rule",
+            rule_name="redshift-statements-finished-rule",  # hard coded
             event_bus=None,  # Redshift update messages go to "default" bus
         )
 
@@ -483,7 +481,7 @@ class UpgradeStack(NestedStack):
         self.state_machine = sfn.StateMachine(
             self,
             "load_redshift_table",
-            state_machine_name=environment["UPGRADE_STACK_VARS"]["STEP_FUNCTION_NAME"],
+            state_machine_name="load_redshift_steps",  # hard coded
             definition=move_s3_files_to_processing_folder.next(
                 sfn.Choice(self, "non-empty_manifest_file?")
                 .when(
@@ -502,7 +500,7 @@ class UpgradeStack(NestedStack):
             sns_topic_name = topic_details["SNS_TOPIC_NAME"]
             sns_topic = sns.Topic.from_topic_arn(
                 self,
-                f"SnsTopic{sns_topic_name}",
+                f"SnsTopic--{sns_topic_name}",
                 topic_arn=(
                     f"arn:aws:sns:{environment['SHARED_STACK_VARS']['AWS_REGION']}:"
                     f"{environment['SHARED_STACK_VARS']['AWS_ACCOUNT']}:{sns_topic_name}"
@@ -512,8 +510,8 @@ class UpgradeStack(NestedStack):
 
             scheduled_eventbridge_rule = events.Rule(
                 self,
-                f"RunPeriodicallyForSnsTopic-{sns_topic_name}",
-                rule_name=f"load-to-redshift-for-topic-{sns_topic_name}",
+                f"RunPeriodicallyForSnsTopic--{sns_topic_name}",
+                rule_name=f"load-to-redshift-for-topic--{sns_topic_name}",
                 event_bus=None,  # scheduled events must be on "default" bus
                 schedule=events.Schedule.rate(
                     Duration.minutes(topic_details["REDSHIFT_LOAD_EVERY_X_MINUTES"])
@@ -569,7 +567,7 @@ class UpgradeStack(NestedStack):
         self.firehose_subscriptions = {}
         for topic_details in environment["SHARED_STACK_VARS"]["DETAILS_ON_TOPICS"]:
             sns_topic_name = topic_details["SNS_TOPIC_NAME"]
-            firehose_name = f"firehose-to-s3-for-topic-{sns_topic_name}"
+            firehose_name = f"firehose-to-s3-for-topic--{sns_topic_name}"
             s3_destination_configuration_property = firehose.CfnDeliveryStream.S3DestinationConfigurationProperty(
                 bucket_arn=self.s3_bucket_for_sns_messages.bucket_arn,  # connect AWS resource
                 role_arn=self.firehose_write_to_s3_role.role_arn,  # connect AWS resource
@@ -596,14 +594,14 @@ class UpgradeStack(NestedStack):
             )
             firehose_with_s3_target = firehose.CfnDeliveryStream(
                 self,
-                f"FirehoseToS3ForTopic{sns_topic_name}",
+                f"FirehoseToS3ForTopic--{sns_topic_name}",
                 s3_destination_configuration=s3_destination_configuration_property,
                 delivery_stream_name=firehose_name,
             )
             self.firehoses_with_s3_target[sns_topic_name] = firehose_with_s3_target
             firehose_subscription = sns.Subscription(
                 self,
-                f"FirehoseSubscriptionForTopic{sns_topic_name}",
+                f"FirehoseSubscriptionForTopic--{sns_topic_name}",
                 topic=self.sns_topics[sns_topic_name],
                 endpoint=firehose_with_s3_target.attr_arn,
                 protocol=sns.SubscriptionProtocol.FIREHOSE,
@@ -623,7 +621,7 @@ class UpgradeStack(NestedStack):
             )
             # scheduled_eventbridge_schedule = scheduler.CfnSchedule(  # if need more than 300 Eventbridge rules
             #     self,
-            #     f"RunPeriodicallyForTopic-{sns_topic_name}",
+            #     f"RunPeriodicallyForTopic--{sns_topic_name}",
             #     schedule_expression=f"rate({topic_details['REDSHIFT_LOAD_EVERY_X_MINUTES']} minute)",
             #     target=scheduler.CfnSchedule.TargetProperty(
             #         arn=self.state_machine.state_machine_arn,

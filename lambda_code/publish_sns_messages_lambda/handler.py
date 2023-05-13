@@ -36,8 +36,8 @@ def publish_sns_messages(sns_topic_arn: str, messages: list[str, Any]):
     for mini_batch in [
         messages[idx : idx + 10] for idx in range(0, len(messages), 10)
     ]:  # publish_batch() supports max of 10 elements
-        response = client.publish_batch(
-            TopicArn=sns_topic_arn,
+        response = client.publish_batch(  # I do see duplicate messages
+            TopicArn=sns_topic_arn,  # from SNS's at least once delivery
             PublishBatchRequestEntries=[
                 {"Id": str(i), "Message": json.dumps(message)}
                 for i, message in enumerate(mini_batch)
