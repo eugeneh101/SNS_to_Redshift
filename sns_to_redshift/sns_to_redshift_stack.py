@@ -223,7 +223,15 @@ class UpgradeStack(NestedStack):
         self.firehose_write_to_s3_role = iam.Role(
             self,
             "FirehoseWriteToS3Role",
-            assumed_by=iam.ServicePrincipal("firehose.amazonaws.com"),
+            assumed_by=iam.CompositePrincipal(
+                iam.ServicePrincipal("firehose.amazonaws.com"),
+                iam.ServicePrincipal("lambda.amazonaws.com"),
+            ),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"  # write Cloudwatch logs
+                ),
+            ],
         )
         self.firehose_write_to_s3_role.add_to_policy(
             statement=iam.PolicyStatement(
@@ -234,8 +242,23 @@ class UpgradeStack(NestedStack):
                     # "s3:ListBucket",
                     # "s3:ListBucketMultipartUploads",
                     "s3:PutObject",
-                    "logs:PutLogEvents",
                 ],
+                resources=["*"],
+            ),
+        )
+        self.firehose_write_to_s3_role.add_to_policy(
+            statement=iam.PolicyStatement(
+                actions=[
+                    "logs:PutLogEvents",
+                    # "logs:CreateLogGroup",  # extra permission
+                    # "logs:CreateLogStream",  # extra permission
+                ],
+                resources=["*"],
+            ),
+        )
+        self.firehose_write_to_s3_role.add_to_policy(
+            statement=iam.PolicyStatement(  # for ExtendedS3DestinationConfigurationProperty
+                actions=["lambda:InvokeFunction"],
                 resources=["*"],
             ),
         )
@@ -253,7 +276,7 @@ class UpgradeStack(NestedStack):
         self.lambda_redshift_access_role.add_to_policy(
             statement=iam.PolicyStatement(
                 actions=[
-                    # for `configure_redshift_table_lambda`
+                    # for `configure_redshift_table_lambda` and `redshift_statements_finished_lambda`
                     "redshift-data:DescribeStatement",
                     # for `configure_redshift_table_lambda` and `truncate_and_load_redshift_table_lambda`
                     "redshift:GetClusterCredentials",
@@ -357,7 +380,7 @@ class UpgradeStack(NestedStack):
             ),
             handler="handler.lambda_handler",
             timeout=Duration.seconds(30),  # depends on number of tables
-            memory_size=128,  # in MB
+            memory_size=128,
             environment={
                 "DETAILS_ON_TOPICS": json.dumps(
                     environment["SHARED_STACK_VARS"]["DETAILS_ON_TOPICS"]
@@ -381,8 +404,8 @@ class UpgradeStack(NestedStack):
                 exclude=[".venv/*"],
             ),
             handler="handler.lambda_handler",
-            timeout=Duration.seconds(30),  # depends on number of files to move
-            memory_size=128,  # in MB
+            timeout=Duration.seconds(5),  # depends on number of files to move
+            memory_size=128,
             environment={
                 "S3_BUCKET_NAME": environment["UPGRADE_STACK_VARS"]["S3_BUCKET_NAME"],
                 "S3_BUCKET_PREFIX_FOR_FIREHOSE": environment["UPGRADE_STACK_VARS"][
@@ -402,7 +425,7 @@ class UpgradeStack(NestedStack):
             ),
             handler="handler.lambda_handler",
             timeout=Duration.seconds(3),  # pretty fast
-            memory_size=128,  # in MB
+            memory_size=128,
             environment={
                 "DYNAMODB_TABLE_NAME": environment["UPGRADE_STACK_VARS"][
                     "DYNAMODB_TABLE_NAME"
@@ -433,8 +456,8 @@ class UpgradeStack(NestedStack):
                 exclude=[".venv/*"],
             ),
             handler="handler.lambda_handler",
-            timeout=Duration.seconds(3),  # pretty fast
-            memory_size=128,  # in MB
+            timeout=Duration.seconds(5),  # depends on number of files to move
+            memory_size=128,
             environment={
                 "DYNAMODB_TABLE_NAME": environment["UPGRADE_STACK_VARS"][
                     "DYNAMODB_TABLE_NAME"
@@ -568,10 +591,64 @@ class UpgradeStack(NestedStack):
         for topic_details in environment["SHARED_STACK_VARS"]["DETAILS_ON_TOPICS"]:
             sns_topic_name = topic_details["SNS_TOPIC_NAME"]
             firehose_name = f"firehose-to-s3-for-topic--{sns_topic_name}"
-            s3_destination_configuration_property = firehose.CfnDeliveryStream.S3DestinationConfigurationProperty(
+            validate_and_transform_message = topic_details[
+                "VALIDATE_AND_TRANSFORM_MESSAGE"
+            ]
+            if validate_and_transform_message:
+                validate_and_transform_message_lambda = _lambda.Function(
+                    self,
+                    f"ValidateAndTransformMessage--{firehose_name}",
+                    function_name=f"validate_and_transform_message_for_topic--{sns_topic_name}",
+                    runtime=_lambda.Runtime.PYTHON_3_9,
+                    code=_lambda.Code.from_asset(
+                        "lambda_code/validate_and_transform_message_lambda",
+                        exclude=[".venv/*"],
+                    ),
+                    handler="handler.lambda_handler",
+                    timeout=Duration.seconds(3),  # should be instantaneous
+                    memory_size=128,
+                    environment={"SNS_TOPIC_NAME": sns_topic_name},
+                    role=self.firehose_write_to_s3_role,
+                    retry_attempts=0,
+                )
+                processor = firehose.CfnDeliveryStream.ProcessorProperty(
+                    type="Lambda",
+                    # the properties below are optional
+                    parameters=[
+                        firehose.CfnDeliveryStream.ProcessorParameterProperty(
+                            parameter_name="RoleArn",
+                            parameter_value=self.firehose_write_to_s3_role.role_arn,  # connect AWS resource
+                        ),
+                        firehose.CfnDeliveryStream.ProcessorParameterProperty(
+                            parameter_name="LambdaArn",  # there are also "Delimiter" and "NumberOfRetries"
+                            parameter_value=validate_and_transform_message_lambda.function_arn,  # connect AWS resource
+                        ),
+                        firehose.CfnDeliveryStream.ProcessorParameterProperty(
+                            parameter_name="BufferSizeInMBs",
+                            parameter_value=str(
+                                environment["UPGRADE_STACK_VARS"][
+                                    "FIREHOSE_BUFFER_SIZE_IN_MBS"
+                                ]
+                            ),
+                        ),
+                        firehose.CfnDeliveryStream.ProcessorParameterProperty(
+                            parameter_name="BufferIntervalInSeconds",
+                            parameter_value=str(
+                                environment["UPGRADE_STACK_VARS"][
+                                    "FIREHOSE_BUFFER_INTERVAL_IN_SECONDS"
+                                ]
+                            ),
+                        ),
+                    ],
+                )
+            extended_s3_destination_configuration = firehose.CfnDeliveryStream.ExtendedS3DestinationConfigurationProperty(
                 bucket_arn=self.s3_bucket_for_sns_messages.bucket_arn,  # connect AWS resource
                 role_arn=self.firehose_write_to_s3_role.role_arn,  # connect AWS resource
                 # the properties below are optional
+                prefix=environment["UPGRADE_STACK_VARS"][
+                    "S3_BUCKET_PREFIX_FOR_FIREHOSE"
+                ].format(SNS_TOPIC_NAME=sns_topic_name),
+                error_output_prefix=f"error/topic={sns_topic_name}/",
                 buffering_hints=firehose.CfnDeliveryStream.BufferingHintsProperty(
                     interval_in_seconds=environment["UPGRADE_STACK_VARS"][
                         "FIREHOSE_BUFFER_INTERVAL_IN_SECONDS"
@@ -583,19 +660,20 @@ class UpgradeStack(NestedStack):
                 cloud_watch_logging_options=firehose.CfnDeliveryStream.CloudWatchLoggingOptionsProperty(
                     enabled=True,
                     log_group_name=f"/aws/kinesisfirehose/{firehose_name}",  # hard coded
-                    log_stream_name="DestinationDelivery",  # hard coded
+                    log_stream_name="DestinationDelivery",  # hard coded  ### currently doesn't work
                 ),
-                prefix=environment["UPGRADE_STACK_VARS"][
-                    "S3_BUCKET_PREFIX_FOR_FIREHOSE"
-                ].format(SNS_TOPIC_NAME=sns_topic_name),
-                # do we need processor?
-                # error_output_prefix="errorOutputPrefix",
+                processing_configuration=firehose.CfnDeliveryStream.ProcessingConfigurationProperty(
+                    enabled=validate_and_transform_message,
+                    processors=[processor] if validate_and_transform_message else [],
+                ),
                 # compression_format="compressionFormat",
+                # s3_backup_configuration=firehose.CfnDeliveryStream.S3DestinationConfigurationProperty(...),
+                # s3_backup_mode="s3BackupMode",
             )
             firehose_with_s3_target = firehose.CfnDeliveryStream(
                 self,
                 f"FirehoseToS3ForTopic--{sns_topic_name}",
-                s3_destination_configuration=s3_destination_configuration_property,
+                extended_s3_destination_configuration=extended_s3_destination_configuration,
                 delivery_stream_name=firehose_name,
             )
             self.firehoses_with_s3_target[sns_topic_name] = firehose_with_s3_target
@@ -619,34 +697,6 @@ class UpgradeStack(NestedStack):
                     # dead_letter_queue=None,
                 )
             )
-            # scheduled_eventbridge_schedule = scheduler.CfnSchedule(  # if need more than 300 Eventbridge rules
-            #     self,
-            #     f"RunPeriodicallyForTopic--{sns_topic_name}",
-            #     schedule_expression=f"rate({topic_details['REDSHIFT_LOAD_EVERY_X_MINUTES']} minute)",
-            #     target=scheduler.CfnSchedule.TargetProperty(
-            #         arn=self.state_machine.state_machine_arn,
-            #         role_arn=self.eventbridge_sfn_role.role_arn,
-            #         # the properties below are optional
-            #         input=json.dumps(topic_details),
-            #         # dead_letter_config=scheduler.CfnSchedule.DeadLetterConfigProperty(
-            #         #     arn="arn"
-            #         # ),
-            #         # event_bridge_parameters=scheduler.CfnSchedule.EventBridgeParametersProperty(
-            #         #     detail_type="detailType",
-            #         #     source="source"
-            #         # ),
-            #         # retry_policy=scheduler.CfnSchedule.RetryPolicyProperty(
-            #         #     maximum_event_age_in_seconds=123,
-            #         #     maximum_retry_attempts=123
-            #         # ),
-            #     ),
-            #     flexible_time_window=scheduler.CfnSchedule.FlexibleTimeWindowProperty(
-            #         mode="OFF"
-            #     ),
-            #     # group_name="groupName",
-            #     # name="name",
-            # )
-            # self.scheduled_eventbridge_schedules.append(scheduled_eventbridge_schedule)
         assert (
             len(environment["SHARED_STACK_VARS"]["DETAILS_ON_TOPICS"])
             == len(self.firehoses_with_s3_target)
@@ -696,5 +746,10 @@ class SnsToRedshiftStack(Stack):
             self.outputs[sns_topic_name]["s3_bucket_prefix"] = CfnOutput(
                 self,
                 f"FirehoseS3BucketPrefix{idx}",  # Output omits underscores and hyphens
-                value=firehose_with_s3_target.s3_destination_configuration.prefix,
+                value=firehose_with_s3_target.extended_s3_destination_configuration.prefix,
+            )
+            self.outputs[sns_topic_name]["s3_bucket_prefix"] = CfnOutput(
+                self,
+                f"FirehoseS3BucketErrorOutputPrefix{idx}",  # Output omits underscores and hyphens
+                value=firehose_with_s3_target.extended_s3_destination_configuration.error_output_prefix,
             )

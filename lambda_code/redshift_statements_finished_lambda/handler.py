@@ -46,6 +46,19 @@ def rename_s3_files(
     print(f"Successfully renamed {len(s3_file_names)} files ✨")
 
 
+def get_redshift_failure_cause(redshift_statements_id: str) -> str:
+    sub_statements = redshift_data_client.describe_statement(Id=redshift_statements_id)[
+        "SubStatements"
+    ]
+    for sub_statement in sub_statements:
+        for key, value in list(sub_statement.items()):
+            try:
+                json.dumps(value)
+            except TypeError:
+                sub_statement.pop(key)  # remove all non-json elements
+    return json.dumps(sub_statements)
+
+
 def lambda_handler(event, context) -> None:
     # print("event", event)
     redshift_statements_state = event["detail"]["state"]
@@ -88,7 +101,6 @@ def lambda_handler(event, context) -> None:
                 }
             ),
         )
-        print(f"Succeeded with `redshift_staetments_id` {redshift_statements_id}")
 
         dynamodb_resource.Table(name=DYNAMODB_TABLE_NAME).update_item(
             Key={
@@ -117,22 +129,28 @@ def lambda_handler(event, context) -> None:
             s3_folder_new="/processed/",
         )
     elif redshift_statements_state in ["ABORTED", "FAILED"]:
-        print(
-            f"Failed with `redshift_statements_id` {redshift_statements_id} "
+        error_message = (
+            f"`redshift_statements_id` {redshift_statements_id} unsuccessful "
             f"with state being {redshift_statements_state}"
+        )
+        cause_message = get_redshift_failure_cause(
+            redshift_statements_id=redshift_statements_id
         )
         sfn_client.send_task_failure(
             taskToken=task_token,
-            error='"string"',  ### figure out what to write here
-            cause='"string"',  ### figure out what to write here
+            error=error_message,  ### figure out what to write here
+            cause=cause_message,  ### figure out what to write here
         )
     else:  # 'ALL'
-        print(
-            f"Failed with `redshift_statements_id` {redshift_statements_id} "
+        error_message = (
+            f"`redshift_statements_id` {redshift_statements_id} unsuccessful "
             f"with state being {redshift_statements_state}"
+        )
+        cause_message = get_redshift_failure_cause(
+            redshift_statements_id=redshift_statements_id
         )
         sfn_client.send_task_failure(
             taskToken=task_token,
-            error=f'"`redshift_statements_state` is {redshift_statements_state}"',  ### figure out what to write here
-            cause='"string"',  ### figure out what to write here
+            error=error_message,  ### figure out what to write here
+            cause=cause_message,  ### figure out what to write here
         )

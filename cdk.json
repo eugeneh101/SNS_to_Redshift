@@ -15,11 +15,12 @@
                         "REDSHIFT_DATABASE_NAME": "dev",
                         "REDSHIFT_SCHEMA_NAME": "finance",
                         "REDSHIFT_TABLE_NAME": "stock_table",
-                        "REDSHIFT_TABLE_COLUMNS_AND_TYPES": "ticker_symbol varchar(4), sector varchar(50), change float, price int",
+                        "REDSHIFT_TABLE_COLUMNS_AND_TYPES": "ticker_symbol_with_suffix varchar(4) not null, sector_with_suffix varchar(50) not null, change_with_suffix float not null, price_with_suffix int not null",
                         "REDSHIFT_LOAD_EVERY_X_MINUTES": 5,
                         "TRUNCATE_TABLE": false,
                         "FILE_TYPE": "json",
-                        "REDSHIFT_COPY_ADDITIONAL_ARGUMENTS": "'auto ignorecase'"
+                        "REDSHIFT_COPY_ADDITIONAL_ARGUMENTS": "'auto ignorecase'",
+                        "VALIDATE_AND_TRANSFORM_MESSAGE": true
                     },
                     {
                         "SNS_TOPIC_NAME": "game-data-topic",
@@ -28,11 +29,12 @@
                         "REDSHIFT_DATABASE_NAME": "dev",
                         "REDSHIFT_SCHEMA_NAME": "entertainment",
                         "REDSHIFT_TABLE_NAME": "game_table",
-                        "REDSHIFT_TABLE_COLUMNS_AND_TYPES": "console varchar(20), genre varchar(20), year int, sales int",
+                        "REDSHIFT_TABLE_COLUMNS_AND_TYPES": "console varchar(20) not null, genre varchar(20) not null, year int not null, sales int not null",
                         "REDSHIFT_LOAD_EVERY_X_MINUTES": 3,
                         "TRUNCATE_TABLE": false,
                         "FILE_TYPE": "json",
-                        "REDSHIFT_COPY_ADDITIONAL_ARGUMENTS": "'auto ignorecase'"
+                        "REDSHIFT_COPY_ADDITIONAL_ARGUMENTS": "'auto ignorecase'",
+                        "VALIDATE_AND_TRANSFORM_MESSAGE": false
                     }
                 ]
             },

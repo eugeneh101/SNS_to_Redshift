@@ -62,8 +62,10 @@ def lambda_handler(event, context) -> None:
                     random.choice(string.ascii_uppercase) for _ in range(4)
                 ),
                 "SECTOR": random.choice(SECTORS),
-                "CHANGE": round((random.random() - 0.5) * 10, 2),
-                "PRICE": random.randrange(-100, 100),
+                # Firehose transform Lambda will convert this str to float
+                "CHANGE": str(round((random.random() - 0.5) * 10, 2)),
+                # Firehose transform Lambda will convert this str to int
+                "PRICE": str(random.randrange(-100, 100)),
             }
             for _ in range(sns_num_messages)
         ]
